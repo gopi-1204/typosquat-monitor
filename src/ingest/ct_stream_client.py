@@ -8,6 +8,7 @@ Automatically captures/refreshes the brand reference screenshot on startup.
 
 import argparse
 import json
+import os
 import websocket
 
 from .permutation_filter import get_brand_settings, build_permutation_set, is_suspicious
@@ -26,7 +27,7 @@ from src.scoring.risk_score import compute_risk_score, risk_level
 from src.alerts.telegram_bot import send_alert
 from src.reporting.report_generator import generate_report
 
-CERTSTREAM_URL = "ws://localhost:8081/full-stream"
+CERTSTREAM_URL = os.getenv("CERTSTREAM_URL", "ws://localhost:8081/full-stream")
 
 
 def on_message(ws, message, permutation_set, official_domain):
@@ -127,8 +128,6 @@ if __name__ == "__main__":
     official_domain = get_brand_settings(cli_brand=args.brand)
     permutation_set = build_permutation_set(official_domain)
 
-    # Automatically ensure the reference screenshot matches the currently
-    # monitored brand -- no manual screenshot step required.
     ensure_reference_screenshot(official_domain)
 
     print(f"\nMonitoring for typosquats of: {official_domain}")

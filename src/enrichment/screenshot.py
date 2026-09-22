@@ -3,9 +3,11 @@ screenshot.py
 Captures a screenshot of a live domain using Playwright headless Chromium.
 Also handles automatically capturing/refreshing the brand's reference screenshot,
 and tracks which brand the current reference belongs to.
+Includes retry logic for resilience against transient network slowness.
 """
 
 import os
+import time
 from playwright.sync_api import sync_playwright
 
 SCREENSHOT_DIR = "data/screenshots"
@@ -13,11 +15,7 @@ REFERENCE_PATH = "reference_assets/brand_reference_screenshot.png"
 REFERENCE_META_PATH = "reference_assets/brand_reference_meta.txt"
 
 
-def capture_screenshot(domain, timeout_ms=20000):
-    """
-    Attempts to load the domain over HTTPS (falls back to HTTP) and
-    saves a screenshot. Returns the file path on success, None on failure.
-    """
+def capture_screenshot(domain, timeout_ms=30000, retries=2):
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
     safe_filename = domain.replace(".", "_").replace("*", "wildcard")
     output_path = os.path.join(SCREENSHOT_DIR, f"{safe_filename}.png")
@@ -28,15 +26,18 @@ def capture_screenshot(domain, timeout_ms=20000):
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1280, "height": 800})
 
-        for url in urls_to_try:
-            try:
-                page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                page.wait_for_timeout(2000)
-                page.screenshot(path=output_path)
-                browser.close()
-                return output_path
-            except Exception:
-                continue
+        for attempt in range(1, retries + 2):
+            for url in urls_to_try:
+                try:
+                    page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                    page.wait_for_timeout(2000)
+                    page.screenshot(path=output_path)
+                    browser.close()
+                    return output_path
+                except Exception:
+                    continue
+            if attempt < retries + 1:
+                time.sleep(3)
 
         browser.close()
         return None
@@ -45,17 +46,15 @@ def capture_screenshot(domain, timeout_ms=20000):
 def ensure_reference_screenshot(official_domain):
     """
     Ensures a reference screenshot exists for the CURRENTLY monitored brand.
-    Automatically captures a fresh one if:
-      - no reference screenshot exists yet, OR
-      - the existing reference belongs to a different brand (tracked via a
-        small metadata file), which happens when --brand is switched.
-    Returns the reference screenshot path, or None on failure.
+    Uses encoding="utf-8-sig" to correctly handle a possible BOM marker
+    (e.g. if the meta file was ever written by PowerShell's -Encoding utf8,
+    which adds a BOM that plain open() would otherwise misread on Windows).
     """
     os.makedirs("reference_assets", exist_ok=True)
 
     existing_brand = None
     if os.path.exists(REFERENCE_META_PATH):
-        with open(REFERENCE_META_PATH, "r") as f:
+        with open(REFERENCE_META_PATH, "r", encoding="utf-8-sig") as f:
             existing_brand = f.read().strip()
 
     if os.path.exists(REFERENCE_PATH) and existing_brand == official_domain:
@@ -68,7 +67,7 @@ def ensure_reference_screenshot(official_domain):
     if captured_path:
         import shutil
         shutil.copy(captured_path, REFERENCE_PATH)
-        with open(REFERENCE_META_PATH, "w") as f:
+        with open(REFERENCE_META_PATH, "w", encoding="utf-8") as f:
             f.write(official_domain)
         print(f"Reference screenshot saved for {official_domain}: {REFERENCE_PATH}")
         return REFERENCE_PATH
