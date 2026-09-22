@@ -1,105 +1,143 @@
 ﻿"""
 db.py
-SQLite storage for detected typosquat candidates.
+PostgreSQL storage for detected typosquat candidates, via SQLAlchemy.
+Every function keeps the exact same name/signature as the original
+SQLite version, so no other module needs to change.
 """
 
-import sqlite3
+import os
 from datetime import datetime, timezone
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text
+from sqlalchemy.orm import sessionmaker, declarative_base
 
-DB_PATH = "data/monitor.db"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://typosquat_user:typosquat_pass@localhost:5432/typosquat"
+)
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
 
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+class Candidate(Base):
+    __tablename__ = "candidates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    domain = Column(String, nullable=False)
+    decoded_domain = Column(String, nullable=True)
+    matched_brand = Column(String, nullable=False)
+    detected_at = Column(String, nullable=False)
+    is_live = Column(Integer, nullable=True)
+    visual_similarity = Column(Float, nullable=True)
+    has_login_form = Column(Integer, nullable=True)
+    risk_score = Column(Float, nullable=True)
+    risk_level = Column(String, nullable=True)
+    screenshot_path = Column(Text, nullable=True)
+    status = Column(String, default="new")
 
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS candidates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            domain TEXT NOT NULL,
-            decoded_domain TEXT DEFAULT NULL,
-            matched_brand TEXT NOT NULL,
-            detected_at TEXT NOT NULL,
-            is_live INTEGER DEFAULT NULL,
-            visual_similarity REAL DEFAULT NULL,
-            has_login_form INTEGER DEFAULT NULL,
-            risk_score REAL DEFAULT NULL,
-            risk_level TEXT DEFAULT NULL,
-            screenshot_path TEXT DEFAULT NULL,
-            status TEXT DEFAULT 'new'
-        )
-    """)
-    conn.commit()
-    conn.close()
+    Base.metadata.create_all(engine)
 
 
 def insert_candidate(domain, matched_brand, decoded_domain=None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO candidates (domain, decoded_domain, matched_brand, detected_at)
-        VALUES (?, ?, ?, ?)
-    """, (domain, decoded_domain, matched_brand, datetime.now(timezone.utc).isoformat()))
-    conn.commit()
-    candidate_id = cursor.lastrowid
-    conn.close()
-    return candidate_id
+    session = SessionLocal()
+    try:
+        candidate = Candidate(
+            domain=domain,
+            decoded_domain=decoded_domain,
+            matched_brand=matched_brand,
+            detected_at=datetime.now(timezone.utc).isoformat(),
+        )
+        session.add(candidate)
+        session.commit()
+        session.refresh(candidate)
+        return candidate.id
+    finally:
+        session.close()
 
 
 def update_liveness(candidate_id, is_live):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE candidates SET is_live = ? WHERE id = ?", (1 if is_live else 0, candidate_id))
-    conn.commit()
-    conn.close()
+    session = SessionLocal()
+    try:
+        candidate = session.get(Candidate, candidate_id)
+        candidate.is_live = 1 if is_live else 0
+        session.commit()
+    finally:
+        session.close()
 
 
 def update_screenshot_path(candidate_id, path):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE candidates SET screenshot_path = ? WHERE id = ?", (path, candidate_id))
-    conn.commit()
-    conn.close()
+    session = SessionLocal()
+    try:
+        candidate = session.get(Candidate, candidate_id)
+        candidate.screenshot_path = path
+        session.commit()
+    finally:
+        session.close()
 
 
 def update_visual_similarity(candidate_id, score):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE candidates SET visual_similarity = ? WHERE id = ?", (score, candidate_id))
-    conn.commit()
-    conn.close()
+    session = SessionLocal()
+    try:
+        candidate = session.get(Candidate, candidate_id)
+        candidate.visual_similarity = float(score) if score is not None else None
+        session.commit()
+    finally:
+        session.close()
 
 
 def update_content_signals(candidate_id, has_login_form):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE candidates SET has_login_form = ? WHERE id = ?", (1 if has_login_form else 0, candidate_id))
-    conn.commit()
-    conn.close()
+    session = SessionLocal()
+    try:
+        candidate = session.get(Candidate, candidate_id)
+        candidate.has_login_form = 1 if has_login_form else 0
+        session.commit()
+    finally:
+        session.close()
 
 
 def update_risk_score(candidate_id, score, level):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("UPDATE candidates SET risk_score = ?, risk_level = ? WHERE id = ?", (score, level, candidate_id))
-    conn.commit()
-    conn.close()
+    session = SessionLocal()
+    try:
+        candidate = session.get(Candidate, candidate_id)
+        candidate.risk_score = score
+        candidate.risk_level = level
+        session.commit()
+    finally:
+        session.close()
 
 
 def get_all_candidates():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM candidates ORDER BY risk_score DESC, detected_at DESC")
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    session = SessionLocal()
+    try:
+        candidates = (
+            session.query(Candidate)
+            .order_by(Candidate.risk_score.desc().nullslast(), Candidate.detected_at.desc())
+            .all()
+        )
+        return [
+            {
+                "id": c.id,
+                "domain": c.domain,
+                "decoded_domain": c.decoded_domain,
+                "matched_brand": c.matched_brand,
+                "detected_at": c.detected_at,
+                "is_live": c.is_live,
+                "visual_similarity": c.visual_similarity,
+                "has_login_form": c.has_login_form,
+                "risk_score": c.risk_score,
+                "risk_level": c.risk_level,
+                "screenshot_path": c.screenshot_path,
+                "status": c.status,
+            }
+            for c in candidates
+        ]
+    finally:
+        session.close()
 
 
 if __name__ == "__main__":
     init_db()
-    print(f"Database initialized at {DB_PATH}")
+    print(f"Database initialized (PostgreSQL) at {DATABASE_URL}")

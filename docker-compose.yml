@@ -1,4 +1,17 @@
 ﻿services:
+  db:
+    image: postgres:15-alpine
+    container_name: typosquat-db
+    environment:
+      POSTGRES_DB: typosquat
+      POSTGRES_USER: typosquat_user
+      POSTGRES_PASSWORD: typosquat_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
   certstream-server:
     image: 0rickyy0/certstream-server-go
     container_name: typosquat-certstream
@@ -14,6 +27,7 @@
     command: ["python", "-u", "-m", "src.ingest.ct_stream_client"]
     environment:
       - CERTSTREAM_URL=ws://certstream-server:8081/full-stream
+      - DATABASE_URL=postgresql://typosquat_user:typosquat_pass@db:5432/typosquat
       - PYTHONUNBUFFERED=1
     env_file:
       - .env
@@ -24,6 +38,7 @@
       - ./config:/app/config
     depends_on:
       - certstream-server
+      - db
     restart: unless-stopped
 
   dashboard:
@@ -31,6 +46,7 @@
     container_name: typosquat-dashboard
     command: ["streamlit", "run", "dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     environment:
+      - DATABASE_URL=postgresql://typosquat_user:typosquat_pass@db:5432/typosquat
       - PYTHONUNBUFFERED=1
     ports:
       - "8501:8501"
@@ -41,4 +57,8 @@
       - ./config:/app/config
     depends_on:
       - monitor-worker
+      - db
     restart: unless-stopped
+
+volumes:
+  pgdata:
