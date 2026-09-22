@@ -1,0 +1,44 @@
+﻿services:
+  certstream-server:
+    image: 0rickyy0/certstream-server-go
+    container_name: typosquat-certstream
+    volumes:
+      - ./certstream_server_go/config.yml:/app/config/config.yaml
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  monitor-worker:
+    build: .
+    container_name: typosquat-worker
+    command: ["python", "-u", "-m", "src.ingest.ct_stream_client"]
+    environment:
+      - CERTSTREAM_URL=ws://certstream-server:8081/full-stream
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./reference_assets:/app/reference_assets
+      - ./config:/app/config
+    depends_on:
+      - certstream-server
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    container_name: typosquat-dashboard
+    command: ["streamlit", "run", "dashboard/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./reference_assets:/app/reference_assets
+      - ./config:/app/config
+    depends_on:
+      - monitor-worker
+    restart: unless-stopped

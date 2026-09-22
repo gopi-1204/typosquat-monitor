@@ -1,0 +1,9 @@
+﻿venv/
+.git/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/screenshots/*.png
+reports/*.pdf
+reference_assets/*.png
+.env
