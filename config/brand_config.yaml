@@ -1,3 +1,33 @@
+# ==============================================================================
+# Typosquat & Brand Impersonation Monitor - Monitored Brand Configurations
+# ==============================================================================
+# Default active brand for single-brand CLI runs:
 brand_name: "paypal"
 official_domain: "paypal.com"
-similarity_threshold: 1
+similarity_threshold: 0.80
+
+# Multi-brand catalog for enterprise SOC monitoring:
+brands:
+  - brand_name: "paypal"
+    official_domain: "paypal.com"
+    category: "Financial / Payments"
+    similarity_threshold: 0.80
+    keywords: ["login", "verify", "wallet", "security", "account", "checkout"]
+
+  - brand_name: "flipkart"
+    official_domain: "flipkart.com"
+    category: "E-Commerce / Retail"
+    similarity_threshold: 0.80
+    keywords: ["login", "order", "deal", "offer", "discount", "account"]
+
+  - brand_name: "google"
+    official_domain: "google.com"
+    category: "Identity / SSO"
+    similarity_threshold: 0.85
+    keywords: ["accounts", "signin", "drive", "security", "verify"]
+
+  - brand_name: "github"
+    official_domain: "github.com"
+    category: "Developer Infrastructure"
+    similarity_threshold: 0.85
+    keywords: ["login", "oauth", "token", "auth", "session"]

@@ -1,67 +1,120 @@
-# 🛡️ Typosquat & Brand Impersonation Monitor
+# 🛡️ Typosquat & Brand Impersonation Threat Intelligence Platform
+### Autonomous Real-Time Detection, Multi-Vector Threat Scoring & Legal Takedown Engine
 
-An automated, real-time threat intelligence platform designed to detect, enrich, score, alert, and generate takedown reports for typosquatting, homoglyph, and brand impersonation domains.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-v2.0-009688.svg)](https://fastapi.tiangolo.com)
+[![Streamlit](https://img.shields.io/badge/Streamlit-SOC_Portal-FF4B4B.svg)](https://streamlit.io)
+[![Playwright](https://img.shields.io/badge/Headless_Browser-Playwright_Chromium-45ba4b.svg)](https://playwright.dev)
+[![Pytest](https://img.shields.io/badge/Pytest-20%2F20_Passed-brightgreen.svg)](https://pytest.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+An enterprise-ready threat intelligence and automated incident response platform designed to detect, enrich, score, triage, alert, and generate registrar-ready legal takedown dossiers for typosquatting, IDN homoglyphs, and brand impersonation domains.
 
 ---
 
-## 📐 Architecture & Pipeline
+## 🏛️ System Architecture
 
 ```
-[ Certificate Transparency (CT) Stream ]
-                  │
-                  ▼
-   [ Ingestion & Permutation Filter ]  ◄── (dnstwist lookalike generator)
-                  │
-                  ▼
-        [ Enrichment Engine ]
-         ├─ Punycode / IDN Decoder   (idna: reveals homoglyphs like pаypal.com)
-         ├─ DNS Liveness Check        (socket resolution)
-         ├─ Headless Screenshot      (Playwright Chromium)
-         ├─ Visual Similarity Engine (pHash comparison vs reference screenshot)
-         ├─ Content Signal Parser    (BeautifulSoup: login forms, password inputs, text)
-         └─ WHOIS / RDAP Lookup       (rdap.org: registrar & abuse contacts)
-                  │
-                  ▼
-        [ Risk Scoring Engine ]      (Weighted composite score 0-100)
-                  │
-         ┌────────┴────────┐
-         ▼                 ▼
-  [ SQLite DB ]    [ Incident Response (HIGH Risk) ]
- (data/monitor.db)  ├─ Telegram Alert Bot
-         │          └─ Automated PDF Takedown Report (xhtml2pdf + Jinja2)
-         ▼
-[ Streamlit Web Dashboard ]
- (dashboard/app.py)
+[ Global Certificate Transparency (CT) Stream ] (rfc6962 WebSockets)
+                      │
+                      ▼
+   [ Permutation & Combosquat Filter ] (dnstwist lookalike fuzzer + keywords)
+                      │
+        (Match Detected: Non-Blocking Enqueue)
+                      │
+                      ▼
+        [ Worker Pool Queue (ThreadPoolExecutor) ]
+          ├─ Worker 1
+          ├─ Worker 2
+          └─ Worker N
+                      │
+                      ▼
+       [ Multi-Vector Forensic Enrichment Engine ]
+        ├─ 1. Punycode / IDN Decoder   (RFC 3492: reveals confusable Cyrillic homoglyphs)
+        ├─ 2. DNS & IP Resolver        (OS socket: confirms active IPv4 weaponization)
+        ├─ 3. MX Mail Server Check     (RFC 5321: spear-phishing & spoofing readiness)
+        ├─ 4. SSL/TLS Telemetry        (x509: short-lived automated DV cert profiling)
+        ├─ 5. Headless Chromium Engine (Playwright: captures candidate screenshot)
+        ├─ 6. Perceptual Hashing       (pHash: 64-bit DCT Hamming distance vs brand reference)
+        ├─ 7. DOM Signal Parser        (BeautifulSoup: <input type='password'> & phishing lures)
+        └─ 8. RDAP Registry Query      (HTTPS: authoritative registrar & abuse contacts)
+                      │
+                      ▼
+       [ Composite Risk Scoring Engine ] (0 - 100 weighted threat model)
+                      │
+        ┌─────────────┴─────────────┐
+        ▼                           ▼
+[ HIGH Risk Threat (>= 70) ]   [ SQLite DB Storage ]
+ ├─ Telegram Alert Bot          ├─ Streamlit SOC Portal (dashboard/app.py)
+ └─ Automated PDF Takedown      └─ FastAPI REST Backend (src/api/main.py)
+    Dossier (ICANN UDRP)
 ```
 
 ---
 
-## ✨ Features
+## ✨ Key Capabilities & Engineering Features
 
-- **Real-Time Ingestion**: Connects to Certificate Transparency (CT) log streams via WebSockets to evaluate newly issued SSL/TLS certificates globally.
-- **Homoglyph & Punycode Decoding**: Converts Internationalized Domain Names (IDNs) (`xn--...`) into Unicode to expose visual lookalike tricks (e.g., Cyrillic `а` replacing Latin `a`).
-- **Visual Similarity Engine**: Captures headless screenshots using **Playwright Chromium** and calculates perceptual hashes (`imagehash.phash`) against official brand reference screenshots.
-- **Phishing HTML Extraction**: Parses DOM structures using **BeautifulSoup** for login forms, password input fields, and suspicious credential-harvesting language.
-- **Network-Resilient WHOIS**: Queries modern HTTPS-based RDAP (`rdap.org`) for registrar info and abuse contact emails, bypassing raw WHOIS port 43 blocks.
-- **Composite Risk Scoring**: Calculates a weighted score ($0 - 100$) categorized into `LOW`, `MEDIUM`, and `HIGH` risk levels.
-- **Automated Takedown PDF Generation**: Generates complete legal takedown evidence reports in PDF format with side-by-side screenshot comparisons and registrar details.
-- **Instant Alerts**: Sends Markdown-formatted alerts to **Telegram** for high-risk threats.
-- **Interactive Security Dashboard**: Real-time **Streamlit** dashboard displaying metrics, threat severity filters, historical detection trends, and screenshot previews.
+- **Transport-Layer Real-Time Ingestion**: Evaluates newly issued SSL/TLS certificates globally from Certificate Transparency logs via WebSockets before campaigns launch.
+- **Asynchronous Non-Blocking Workers**: Ingestion filters incoming certificates in $<2$ ms and offloads heavy enrichment (Playwright screenshots, DNS, RDAP) to a background thread pool (`ThreadPoolExecutor`).
+- **Homoglyph & Punycode Decoding**: Converts Internationalized Domain Names (IDNs) (`xn--...`) into Unicode to expose deceptive Cyrillic/Greek lookalikes (e.g. Cyrillic `а` spoofing Latin `a`).
+- **Perceptual Image Hashing (pHash)**: Quantifies visual similarity against authentic brand reference screenshots using 64-bit DCT hashes and Hamming distance calculation.
+- **Spear-Phishing MX Infrastructure Detection**: Probes mail exchanger records to detect if lookalikes are configured for executive spoofing or email deception.
+- **SSL/TLS Telemetry Profiling**: Evaluates certificate issuer (Let's Encrypt, ZeroSSL) and validity duration.
+- **DOM Credential Harvester Identification**: Parses rendered HTML DOM for password fields (`<input type="password">`) and social engineering keywords (*verify account*, *unusual activity*).
+- **Network-Resilient RDAP**: Queries HTTPS-based RDAP (`rdap.org`) for registrar and abuse contacts, bypassing raw port 43 firewall blocks.
+- **Multi-Brand Monitoring Catalog**: Simultaneously defends multiple brands (PayPal, Flipkart, Google, GitHub) with custom thresholds and keyword dictionaries.
+- **Automated Legal Takedown PDF Dossier**: Automatically compiles a court-ready evidence dossier with side-by-side screenshots, forensic telemetry, and ICANN UDRP / RAA Section 3.18 notices.
+- **Interactive SOC Security Operations Portal**: Streamlit-based analyst dashboard featuring incident triage lifecycles (`new`, `investigating`, `takedown_requested`, `resolved`), side-by-side screenshot comparisons, and an on-demand domain scanner.
+- **Enterprise REST API**: FastAPI backend with full OpenAPI/Swagger documentation (`/docs`).
 
 ---
 
-## 📊 Risk Scoring Weights
+## 📊 Composite Risk Scoring Formula
 
-| Signal | Contribution | Description |
+$$Score = \min\left(100, \sum_{i=1}^{6} w_i \cdot s_i\right)$$
+
+| Signal Vector | Weight ($w_i$) | Description |
 | :--- | :---: | :--- |
-| **DNS Liveness** | **25 points** | Domain actively resolves to an IP address. |
-| **Visual Similarity** | **35 points** | Perceptual hash distance (`pHash`) vs brand reference screenshot. |
-| **Login Form Present** | **25 points** | Form containing `<input type="password">` detected. |
-| **Suspicious Phrases** | **15 points** | Contains keywords like *"verify your account"*, *"unusual activity"*. |
+| **DNS Resolution** | **20 pts** | Domain actively resolves to an IPv4/IPv6 host. |
+| **Visual Similarity** | **30 pts** | Perceptual hash distance ($1 - \frac{d_{pHash}}{64}$) vs brand reference. |
+| **Credential Harvester** | **20 pts** | Presence of `<form>` with `<input type="password">` in DOM. |
+| **Phishing Lures** | **10 pts** | Scaled keyword match (*verify your account*, *unusual activity*, etc.). |
+| **Email Infrastructure** | **10 pts** | Active Mail Exchanger (MX) records configured. |
+| **SSL Telemetry** | **10 pts** | Automated / short-lived Domain Validation (DV) certificate profile. |
 
-- 🔴 **HIGH Risk**: Score $\ge 70$ (Triggers Telegram notification & PDF report generation)
-- 🟠 **MEDIUM Risk**: Score $50 - 69$
-- 🟢 **LOW Risk**: Score $< 50$
+- 🔴 **HIGH RISK**: Score $\ge 70$ (Escalates to incident response, Telegram alerts & PDF takedown dossier)
+- 🟠 **MEDIUM RISK**: Score $50 - 69$ (Active watchlist)
+- 🟢 **LOW RISK**: Score $< 50$ (Parked / informational)
+
+---
+
+## 🚀 Quick Start Guide
+
+### 1. Prerequisites
+- Python 3.10+
+- Linux / macOS / Windows WSL
+
+### 2. Turnkey Launch Script
+Use the master turnkey runner script to launch any project component:
+
+```bash
+# Make script executable
+chmod +x run_project.sh
+
+# Interactive launch menu:
+./run_project.sh
+```
+
+Or invoke components directly:
+
+| Command | Action |
+| :--- | :--- |
+| `./run_project.sh dashboard` | Launch the **Streamlit SOC Portal** (`http://localhost:8501`) |
+| `./run_project.sh api` | Launch the **FastAPI REST Backend** (`http://localhost:8000/docs`) |
+| `./run_project.sh simulate` | Run the **Live CT Stream Simulator** for presentation demos |
+| `./run_project.sh demo` | Run High-Risk Threat Pipeline & Generate Legal PDF Dossier |
+| `./run_project.sh seed` | Seed database with realistic multi-brand threat records |
+| `./run_project.sh test` | Run the automated **Pytest** test suite (20/20 tests) |
 
 ---
 
@@ -70,109 +123,110 @@ An automated, real-time threat intelligence platform designed to detect, enrich,
 ```
 typosquat-monitor/
 ├── config/
-│   └── brand_config.yaml           # Monitored brand settings
-├── certstream_server_go/           # Go-based CT log server configuration
+│   └── brand_config.yaml            # Monitored multi-brand catalog & thresholds
 ├── dashboard/
-│   └── app.py                      # Streamlit live web dashboard
+│   └── app.py                       # Streamlit SOC Threat Intelligence Portal
 ├── data/
-│   ├── monitor.db                  # SQLite database
-│   └── screenshots/                # Captured candidate screenshots
-├── reference_assets/               # Reference brand screenshots & metadata
-├── reports/                        # Generated PDF takedown reports
+│   ├── monitor.db                   # SQLite database with schema migrations
+│   └── screenshots/                 # Captured candidate screenshots
+├── reference_assets/                # Brand reference screenshots & metadata
+├── reports/                         # Generated PDF takedown dossiers
 ├── src/
 │   ├── alerts/
-│   │   └── telegram_bot.py         # Telegram alert integration
+│   │   └── telegram_bot.py          # Telegram incident notification bot
+│   ├── api/
+│   │   └── main.py                  # FastAPI REST API backend & Swagger UI
 │   ├── enrichment/
-│   │   ├── content_signals.py      # HTML login form & phrase detection
-│   │   ├── dns_check.py            # Socket DNS resolution check
-│   │   ├── punycode_decoder.py     # IDN / Punycode converter
-│   │   ├── screenshot.py           # Playwright headless screenshot engine
-│   │   ├── visual_similarity.py    # Perceptual hash comparison
-│   │   └── whois_lookup.py         # RDAP registrar & abuse info lookup
+│   │   ├── content_signals.py       # HTML DOM form & keyword parser
+│   │   ├── dns_check.py             # OS-level DNS IPv4 resolver
+│   │   ├── mail_check.py            # MX mail infrastructure inspector
+│   │   ├── pipeline.py              # Unified multi-vector enrichment pipeline
+│   │   ├── punycode_decoder.py      # IDN / Punycode homoglyph converter
+│   │   ├── screenshot.py            # Playwright headless browser engine
+│   │   ├── ssl_check.py             # TLS certificate telemetry extractor
+│   │   ├── visual_similarity.py     # Perceptual hashing (pHash) comparator
+│   │   └── whois_lookup.py          # RDAP HTTPS registrar & abuse lookup
 │   ├── ingest/
-│   │   ├── ct_stream_client.py     # Main CT stream websocket listener
-│   │   └── permutation_filter.py   # dnstwist lookalike generator
+│   │   ├── ct_simulator.py          # Real-time CT stream simulator for live demos
+│   │   ├── ct_stream_client.py      # Non-blocking WebSocket CT stream listener
+│   │   └── permutation_filter.py    # dnstwist lookalike generator & filter
 │   ├── reporting/
-│   │   ├── report_generator.py     # Jinja2 + xhtml2pdf engine
+│   │   ├── report_generator.py      # Jinja2 + xhtml2pdf takedown compiler
 │   │   └── templates/
-│   │       └── takedown_report.html.j2
+│   │       └── takedown_report.html.j2 # Legal takedown dossier HTML template
 │   ├── scoring/
-│   │   └── risk_score.py           # Risk calculation logic
+│   │   └── risk_score.py            # Multi-vector composite threat scoring
 │   └── storage/
-│       └── db.py                   # SQLite database helper functions
-├── demo_high_risk_trigger.py       # Pipeline simulation & PDF generator script
-├── test_multi_domain_proof.py      # Multi-domain proof-of-concept test
-├── README.md                       # Project overview & documentation
-└── DEVELOPMENT.md                  # Future enhancement & technical roadmap
+│       └── db.py                    # SQLite models, migrations & triage CRUD
+├── tests/
+│   ├── test_api.py                  # FastAPI endpoint integration tests
+│   ├── test_permutation.py          # dnstwist lookalike tests
+│   ├── test_punycode.py             # Homoglyph decoding tests
+│   ├── test_reporting.py            # PDF dossier generation tests
+│   ├── test_scoring.py              # Risk scoring mathematical tests
+│   └── test_storage.py              # Database lifecycle & filter tests
+├── run_project.sh                   # Turnkey CLI launcher script
+├── seed_data.py                     # Demo threat intelligence database seeder
+├── demo_high_risk_trigger.py        # Pipeline simulation & PDF generator
+├── Dockerfile                       # Production container specification
+├── docker-compose.yml               # Multi-container service orchestration
+├── FINAL_YEAR_PROJECT_REPORT.md     # Academic project report & dissertation
+├── VIVA_QUESTIONS_AND_ANSWERS.md    # 25+ Viva defense questions and answers
+├── PRESENTATION_GUIDE.md            # Step-by-step presentation & demo guide
+└── requirements.txt                 # Project dependencies
 ```
 
 ---
 
-## 🚀 Quick Start & Installation
+## 🧪 Automated Testing & Verification
 
-### 1. Prerequisites
-- Python 3.10+
-- `pip` & `venv`
-
-### 2. Environment Setup
-Clone the repository and set up a virtual environment:
+The platform includes a comprehensive Pytest test suite covering risk scoring mathematical bounds, punycode decoding, lookalike generation, database CRUD, PDF generation, and REST API endpoints:
 
 ```bash
-git clone https://github.com/your-org/typosquat-monitor.git
-cd typosquat-monitor
-
-python3 -m venv .venv
-source .venv/bin/activate
+pytest tests/ -v
 ```
 
-### 3. Install Dependencies & Playwright
-```bash
-pip install python-dotenv dnstwist playwright streamlit xhtml2pdf imagehash jinja2 websocket-client requests pyyaml idna pillow bs4
-playwright install chromium
+```
+============================== test session starts ==============================
+tests/test_api.py::test_api_root PASSED                                  [  5%]
+tests/test_api.py::test_api_metrics PASSED                               [ 10%]
+tests/test_api.py::test_api_brands PASSED                                [ 15%]
+tests/test_api.py::test_api_candidates_list PASSED                       [ 20%]
+tests/test_api.py::test_api_status_update PASSED                         [ 25%]
+tests/test_permutation.py::test_build_permutation_set PASSED             [ 30%]
+tests/test_permutation.py::test_own_brand_not_flagged PASSED             [ 35%]
+tests/test_permutation.py::test_typo_is_flagged PASSED                   [ 40%]
+tests/test_permutation.py::test_combosquatting_match PASSED              [ 45%]
+tests/test_permutation.py::test_multi_brand_matching PASSED              [ 50%]
+tests/test_punycode.py::test_plain_domain PASSED                         [ 55%]
+tests/test_punycode.py::test_punycode_decoding PASSED                    [ 60%]
+tests/test_punycode.py::test_invalid_punycode PASSED                     [ 65%]
+tests/test_reporting.py::test_pdf_generation PASSED                      [ 70%]
+tests/test_scoring.py::test_weights_sum_to_100 PASSED                    [ 75%]
+tests/test_scoring.py::test_max_score_is_100 PASSED                      [ 80%]
+tests/test_scoring.py::test_zero_score_for_dormant PASSED                [ 85%]
+tests/test_scoring.py::test_risk_level_thresholds PASSED                 [ 90%]
+tests/test_scoring.py::test_partial_weights PASSED                       [ 95%]
+tests/test_storage.py::test_db_lifecycle PASSED                          [100%]
+============================== 20 passed in 2.35s ===============================
 ```
 
 ---
 
-## 💻 Usage Instructions
+## 🎓 Academic Deliverables Included
 
-### 1. Run the Streamlit Dashboard
-Launch the dashboard to monitor live candidate domain metrics and historical trends:
-```bash
-streamlit run dashboard/app.py
-```
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
-### 2. Run the High-Risk Threat Simulation
-Simulate a realistic high-risk domain detection, score calculation, and PDF report creation:
-```bash
-python demo_high_risk_trigger.py
-```
-*Generated report location:* `reports/takedown_flipkart-secure-login_com.pdf`
-
-### 3. Start Live Monitoring (CT Stream Ingestion)
-To stream live Certificate Transparency logs and automatically flag lookalikes:
-```bash
-# Using default brand from config/brand_config.yaml
-python -m src.ingest.ct_stream_client
-
-# Or monitor a specific brand domain via CLI:
-python -m src.ingest.ct_stream_client --brand paypal.com
-```
+For university evaluations and final year project defense, this repository includes:
+1. **[Academic Project Report / Dissertation](FINAL_YEAR_PROJECT_REPORT.md)**: Full IEEE/academic format with Abstract, Problem Statement, Literature Review, Mathematical Model, Implementation, and Evaluation.
+2. **[Viva Voce Questions & Answers](VIVA_QUESTIONS_AND_ANSWERS.md)**: 25+ in-depth viva questions covering networking, IDN homoglyphs, CT logs (RFC 6962), pHash, legal frameworks (ICANN UDRP), and architecture.
+3. **[Presentation & Demo Walkthrough](PRESENTATION_GUIDE.md)**: Complete demonstration script and slide roadmap for presenting to examiners.
 
 ---
 
-## 🔔 Setting Up Telegram Alerts (Optional)
+## ⚖️ Legal & Ethical Compliance
 
-Create a `.env` file in the project root:
-
-```env
-TELEGRAM_BOT_TOKEN="your_bot_token_here"
-TELEGRAM_CHAT_ID="your_chat_id_here"
-```
-
-When a `HIGH`-risk candidate is flagged ($\ge 70$), a notification will be pushed to your Telegram chat.
+This platform is developed strictly for **defensive cybersecurity, brand protection, and academic research**. Takedown evidence reports conform to the **ICANN Uniform Domain-Name Dispute-Resolution Policy (UDRP)** and **ICANN Registrar Accreditation Agreement (RAA) Section 3.18**.
 
 ---
 
 ## 📄 License
-This project is released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).

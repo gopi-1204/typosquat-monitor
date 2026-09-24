@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Streamlit SOC Analyst Web Portal
+  soc-dashboard:
+    build: .
+    container_name: typosquat_dashboard
+    command: streamlit run dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./reference_assets:/app/reference_assets
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # Enterprise FastAPI REST Service
+  api-service:
+    build: .
+    container_name: typosquat_api
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # Continuous CT Log Stream Ingestion Worker
+  ingest-worker:
+    build: .
+    container_name: typosquat_worker
+    command: python -m src.ingest.ct_stream_client
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./reference_assets:/app/reference_assets
+    env_file:
+      - .env
+    restart: unless-stopped

@@ -1,144 +1,182 @@
-﻿"""
+"""
 ct_stream_client.py
-Full pipeline: CT stream -> typosquat filter -> punycode decode -> DNS check ->
-screenshot -> visual similarity -> content signals -> composite risk score ->
-Telegram alert + takedown report (HIGH risk only) -> SQLite storage.
-Automatically captures/refreshes the brand reference screenshot on startup.
+Asynchronous, high-throughput CT stream client.
+Ingests Certificate Transparency (CT) log updates over WebSockets, filters against
+monitored brand lookalikes, and delegates enrichment to a non-blocking worker pool.
 """
 
 import argparse
 import json
+import os
 import websocket
+from concurrent.futures import ThreadPoolExecutor
 
-from .permutation_filter import get_brand_settings, build_permutation_set, is_suspicious
+from src.ingest.permutation_filter import (
+    get_brand_settings,
+    build_permutation_set,
+    build_multi_brand_permutation_map,
+    is_suspicious,
+    match_against_all_brands
+)
 from src.storage.db import (
     init_db, insert_candidate, update_liveness,
     update_screenshot_path, update_visual_similarity,
-    update_content_signals, update_risk_score
+    update_content_signals, update_mail_and_ssl,
+    update_risk_score, update_takedown_report
 )
-from src.enrichment.dns_check import is_domain_live
-from src.enrichment.screenshot import capture_screenshot, ensure_reference_screenshot
-from src.enrichment.visual_similarity import compute_similarity
-from src.enrichment.content_signals import fetch_page_html, analyze_content
-from src.enrichment.punycode_decoder import decode_domain
-from src.enrichment.whois_lookup import get_whois_info
-from src.scoring.risk_score import compute_risk_score, risk_level
+from src.enrichment.pipeline import analyze_domain
+from src.enrichment.screenshot import ensure_reference_screenshot
 from src.alerts.telegram_bot import send_alert
 from src.reporting.report_generator import generate_report
 
-CERTSTREAM_URL = "ws://localhost:8081/full-stream"
+DEFAULT_CERTSTREAM_URL = os.getenv("CERTSTREAM_URL", "ws://localhost:8081/full-stream")
+WORKER_POOL = ThreadPoolExecutor(max_workers=5, thread_name_prefix="threat-enricher")
 
 
-def on_message(ws, message, permutation_set, official_domain):
+def process_threat_candidate(domain, matched_brand, match_reason="lookalike"):
+    """
+    Worker task: runs full multi-signal enrichment, risk scoring, alerting,
+    and takedown report generation without blocking CT stream ingestion.
+    """
+    print(f"\n[WORKER] Enriching candidate: {domain} (Brand: {matched_brand}, Reason: {match_reason})")
+    try:
+        # Run unified multi-vector enrichment pipeline
+        profile = analyze_domain(
+            domain,
+            matched_brand=matched_brand,
+            capture_screen=True,
+            fetch_whois=True
+        )
+
+        candidate_id = insert_candidate(
+            domain=domain,
+            matched_brand=matched_brand,
+            decoded_domain=profile["decoded_domain"]
+        )
+
+        update_liveness(candidate_id, profile["is_live"], ip_address=profile["ip_address"])
+
+        if profile["is_live"]:
+            if profile["screenshot_path"]:
+                update_screenshot_path(candidate_id, profile["screenshot_path"])
+                update_visual_similarity(candidate_id, profile["visual_similarity"])
+
+            update_content_signals(
+                candidate_id,
+                has_login_form=profile["has_login_form"],
+                suspicious_phrases=profile["suspicious_phrases"]
+            )
+
+            update_mail_and_ssl(
+                candidate_id,
+                has_mx=profile["has_mx_record"],
+                ssl_issuer=profile["ssl_issuer"]
+            )
+
+        update_risk_score(candidate_id, profile["risk_score"], profile["risk_level"])
+        print(f"[WORKER RESULT] {domain} -> Risk Score: {profile['risk_score']}/100 ({profile['risk_level']})")
+
+        # High risk incident response triggers
+        if profile["risk_level"] == "HIGH":
+            send_alert(domain, profile["risk_score"], profile["risk_level"], matched_brand)
+            candidate_record = {
+                "id": candidate_id,
+                "domain": domain,
+                "decoded_domain": profile["decoded_domain"],
+                "matched_brand": matched_brand,
+                "detected_at": "CT Stream Live",
+                "is_live": profile["is_live"],
+                "ip_address": profile["ip_address"],
+                "has_mx_record": profile["has_mx_record"],
+                "ssl_issuer": profile["ssl_issuer"],
+                "visual_similarity": profile["visual_similarity"],
+                "has_login_form": profile["has_login_form"],
+                "suspicious_phrases": ", ".join(profile["suspicious_phrases"]),
+                "risk_score": profile["risk_score"],
+                "risk_level": profile["risk_level"],
+                "screenshot_path": profile["screenshot_path"],
+            }
+            report_path = generate_report(candidate_record, profile.get("whois_info", {}))
+            if report_path:
+                update_takedown_report(candidate_id, report_path)
+                print(f"[WORKER DOSSIER] Takedown report generated: {report_path}")
+
+    except Exception as e:
+        print(f"[WORKER ERROR] Enrichment failed for {domain}: {e}")
+
+
+def on_message(ws, message, brand_map, single_brand=None, single_perms=None):
+    """Non-blocking message handler: evaluates domains and submits matches to worker pool."""
     try:
         data = json.loads(message)
-
         if data.get("message_type") != "certificate_update":
             return
 
-        leaf_cert = data["data"]["leaf_cert"]
+        leaf_cert = data.get("data", {}).get("leaf_cert", {})
         domains = leaf_cert.get("all_domains", [])
 
         for domain in domains:
-            if is_suspicious(domain, permutation_set, official_domain=official_domain):
-                print(f"[SUSPICIOUS MATCH] {domain}")
+            domain = domain.lower().lstrip("*.")
 
-                decoded, is_puny = decode_domain(domain)
-                if is_puny:
-                    print(f"  -> Decoded (Punycode): {decoded}")
-
-                candidate_id = insert_candidate(domain, official_domain, decoded_domain=decoded if is_puny else None)
-
-                live = is_domain_live(domain)
-                update_liveness(candidate_id, live)
-                print(f"  -> DNS check: {'LIVE' if live else 'not live'}")
-
-                similarity = None
-                has_login = False
-                phrase_count = 0
-                screenshot_path = None
-
-                if live:
-                    screenshot_path = capture_screenshot(domain)
-                    if screenshot_path:
-                        update_screenshot_path(candidate_id, screenshot_path)
-                        similarity = compute_similarity(screenshot_path)
-                        if similarity is not None:
-                            update_visual_similarity(candidate_id, similarity)
-                            print(f"  -> Visual similarity: {similarity}")
-
-                    html = fetch_page_html(domain)
-                    content_result = analyze_content(html)
-                    has_login = content_result["has_login_form"]
-                    phrase_count = len(content_result["suspicious_phrases_found"])
-                    update_content_signals(candidate_id, has_login)
-                    print(f"  -> Login form detected: {has_login}")
-
-                score, breakdown = compute_risk_score(live, similarity, has_login, phrase_count)
-                level = risk_level(score)
-                update_risk_score(candidate_id, score, level)
-                print(f"  -> RISK SCORE: {score}/100 ({level})")
-
-                if level == "HIGH":
-                    sent = send_alert(domain, score, level, official_domain)
-                    print(f"  -> Telegram alert sent: {sent}")
-
-                    whois_info = get_whois_info(domain)
-
-                    candidate_record = {
-                        "domain": domain,
-                        "decoded_domain": decoded if is_puny else None,
-                        "matched_brand": official_domain,
-                        "detected_at": "just now",
-                        "is_live": live,
-                        "visual_similarity": similarity,
-                        "has_login_form": has_login,
-                        "risk_score": score,
-                        "risk_level": level,
-                        "screenshot_path": screenshot_path,
-                    }
-
-                    report_path = generate_report(candidate_record, whois_info)
-                    print(f"  -> Takedown report generated: {report_path}")
+            if single_brand and single_perms:
+                if is_suspicious(domain, single_perms, official_domain=single_brand):
+                    print(f"[STREAM MATCH] Flagged: {domain} -> Impersonating: {single_brand}")
+                    WORKER_POOL.submit(process_threat_candidate, domain, single_brand, "single_brand_match")
+            else:
+                is_match, matched_brand, reason = match_against_all_brands(domain, brand_map)
+                if is_match:
+                    print(f"[STREAM MATCH] Flagged: {domain} -> Impersonating: {matched_brand} ({reason})")
+                    WORKER_POOL.submit(process_threat_candidate, domain, matched_brand, reason)
 
     except Exception as e:
-        print(f"Error processing message: {e}")
+        print(f"Error handling CT message: {e}")
 
 
 def on_error(ws, error):
-    print(f"Websocket error: {error}")
+    print(f"[STREAM ERROR] {error}")
 
 
 def on_close(ws, close_status_code, close_msg):
-    print("Connection closed.")
+    print("[STREAM CLOSED] Connection terminated.")
 
 
 def on_open(ws):
-    print("Connected to certstream-server-go. Watching for typosquat matches...\n")
+    print(">>> Connected to Certificate Transparency WebSocket stream.")
+    print(">>> Threat monitoring engine is active and non-blocking.\n")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--brand", help="Override brand domain, e.g. flipkart.com")
-    args = parser.parse_args()
-
+def run_monitor(brand_override=None, server_url=DEFAULT_CERTSTREAM_URL):
     init_db()
 
-    official_domain = get_brand_settings(cli_brand=args.brand)
-    permutation_set = build_permutation_set(official_domain)
+    single_brand = None
+    single_perms = None
+    brand_map = None
 
-    # Automatically ensure the reference screenshot matches the currently
-    # monitored brand -- no manual screenshot step required.
-    ensure_reference_screenshot(official_domain)
-
-    print(f"\nMonitoring for typosquats of: {official_domain}")
-    print(f"Loaded {len(permutation_set)} permutations to watch for.\n")
+    if brand_override:
+        single_brand = get_brand_settings(cli_brand=brand_override)
+        single_perms = build_permutation_set(single_brand)
+        ensure_reference_screenshot(single_brand)
+        print(f"Monitoring targeted brand: {single_brand} ({len(single_perms)} lookalike permutations)")
+    else:
+        brand_map = build_multi_brand_permutation_map()
+        for b_domain in brand_map.keys():
+            ensure_reference_screenshot(b_domain)
+        print(f"Enterprise Multi-Brand Mode: Watching {len(brand_map)} brands: {list(brand_map.keys())}")
 
     ws = websocket.WebSocketApp(
-        CERTSTREAM_URL,
+        server_url,
         on_open=on_open,
-        on_message=lambda ws, msg: on_message(ws, msg, permutation_set, official_domain),
+        on_message=lambda ws, msg: on_message(ws, msg, brand_map, single_brand, single_perms),
         on_error=on_error,
         on_close=on_close,
     )
     ws.run_forever()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="CT Stream Typosquat Threat Monitor")
+    parser.add_argument("--brand", help="Override brand domain, e.g. flipkart.com")
+    parser.add_argument("--server", default=DEFAULT_CERTSTREAM_URL, help="CertStream WebSocket URL")
+    args = parser.parse_args()
+
+    run_monitor(brand_override=args.brand, server_url=args.server)
